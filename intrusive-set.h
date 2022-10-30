@@ -1,10 +1,10 @@
 #pragma once
 
-#include <cassert>  // assert
+#include <cassert> // assert
+#include <climits>
 #include <iterator> // std::reverse_iterator
 #include <random>
 #include <utility> // std::pair, std::swap
-#include "bimap.h"
 
 namespace intrusive {
 
@@ -15,7 +15,11 @@ template <typename T, typename Base, typename Tag = default_tag,
 struct set;
 
 struct set_element_base {
-  set_element_base() : y(rand()){};
+
+  static std::default_random_engine engine;
+  static std::uniform_int_distribution<uint32_t> random_elem;
+
+  set_element_base() : y(random_elem(engine)){};
 
   set_element_base(set_element_base&& other) {
     std::swap(other.left, left);
@@ -24,7 +28,17 @@ struct set_element_base {
     other.unlink();
   }
 
+  void swap(set_element_base& other) {
+    std::swap(other.left, left);
+    std::swap(other.right, right);
+    std::swap(other.parent, parent);
+  }
+
   set_element_base(set_element_base const& other) = delete;
+
+  bool has_parent() {
+    return parent != nullptr;
+  }
 
   ~set_element_base() {
     unlink();
@@ -47,31 +61,33 @@ private:
   }
 };
 
+
+
 template <typename Tag = default_tag>
 struct set_element : set_element_base {};
 
 template <typename T, typename Base, typename Tag, typename Compare>
-struct set {
-private:
-  set_element<Tag> root;
+struct set : Compare {
+public:
+  set_element<Tag>* root;
 
   static Base& get_value(set_element_base* tr) {
     return (static_cast<T*>(tr))->elem;
   }
 
-  std::pair<set_element_base*, set_element_base*>
-  static split(set_element_base* tr, Base const& value, bool lower = false) {
+  static std::pair<set_element_base*, set_element_base*>
+  split(set_element_base* tr, Base const& value, Compare const& comparator,
+        bool lower = true) {
     if (tr == nullptr) {
       return {nullptr, nullptr};
     }
-    if ((!lower &&
-         (comparator(value, get_value(tr)) || value == get_value(tr))) ||
-        (lower && comparator(value, get_value(tr)))) {
-      auto p = split(tr->left, value, lower);
+    if ((comparator(value, get_value(tr))) ||
+        (lower && value == get_value(tr))) {
+      auto p = split(tr->left, value, comparator, lower);
       set_left(tr, p.second);
       return {p.first, tr};
     } else {
-      auto p = split(tr->right, value, lower);
+      auto p = split(tr->right, value, comparator, lower);
       set_right(tr, p.first);
       return {tr, p.second};
     }
@@ -114,28 +130,28 @@ private:
     return tr;
   }
 
-  static set_element_base* get_next(set_element_base* ptr) {
-    if (ptr->right != nullptr) {
-      ptr = get_min(ptr->right);
+  static set_element_base* get_next(set_element_base* tr) {
+    if (tr->right != nullptr) {
+      tr = get_min(tr->right);
     } else {
-      while (ptr->parent->right == ptr) {
-        ptr = ptr->parent;
+      while (tr->parent->right == tr) {
+        tr = tr->parent;
       }
-      ptr = ptr->parent;
+      tr = tr->parent;
     }
-    return ptr;
+    return tr;
   }
 
-  static set_element_base* get_prev(set_element_base* ptr) {
-    if (ptr->left != nullptr) {
-      ptr = get_max(ptr->left);
+  static set_element_base* get_prev(set_element_base* tr) {
+    if (tr->left != nullptr) {
+      tr = get_max(tr->left);
     } else {
-      while (ptr->parent->left == ptr) {
-        ptr = ptr->parent;
+      while (tr->parent->left == tr) {
+        tr = tr->parent;
       }
-      ptr = ptr->parent;
+      tr = tr->parent;
     }
-    return ptr;
+    return tr;
   }
 
   static void set_left(set_element_base* ptr, set_element_base* left) {
@@ -153,15 +169,16 @@ private:
   }
 
 public:
-  template <typename DATA_TYPE>
-  struct iterator;
+  set() : root(nullptr), Compare(Compare()) {}
 
-  using const_iterator = iterator<Base>;
-  using reverse_iterator = std::reverse_iterator<iterator<Base>>;
-  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+  set(Compare const& comparator) : root(nullptr), Compare(comparator) {}
 
-  // O(1) nothrow
-  set() : root() {}
+  set(set_element<Tag>* root, Compare const& comparator)
+      : root(root), Compare(comparator) {}
+
+  void set_root(set_element<Tag>* new_root) {
+    root = new_root;
+  }
 
   set(set const& other) = delete;
 
@@ -172,37 +189,36 @@ public:
   // O(n) nothrow
   ~set() = default;
 
-  const_iterator begin() const {
-    if (root.left == nullptr) {
+  set_element<Tag>* begin() const {
+    if (root->left == nullptr) {
       return end();
     }
-    auto ptr = static_cast<set_element<Tag>*>(get_min(root.left));
-    return const_iterator(ptr);
+    return static_cast<set_element<Tag>*>(get_min(root->left));
   }
 
-  const_iterator end() const {
-    return const_iterator(const_cast<set_element<Tag>*>(&root));
+  set_element<Tag>* end() const {
+    return const_cast<set_element<Tag>*>(root);
   }
 
   // O(h) nothrow
-  iterator<Base> insert(T& value) {
-    auto p = split(root.left, value.elem);
-    auto p1 = split(p.second, value.elem, true);
+  set_element<Tag>* insert(T& value) {
+    auto p = split(root->left, value.elem,
+                   *static_cast<Compare*>(const_cast<set*>(this)));
+    auto p1 = split(p.second, value.elem,
+                    *static_cast<Compare*>(const_cast<set*>(this)), false);
     auto tmp = p1.first;
-    bool result = false;
     if (p1.first == nullptr) {
       tmp = static_cast<set_element_base*>(&value);
-      result = true;
     }
     p.second = merge(tmp, p1.second);
-    set_left(&root, merge(p.first, p.second));
-    return iterator<Base>(static_cast<set_element<Tag>*>(tmp));
+    set_left(root, merge(p.first, p.second));
+    return static_cast<set_element<Tag>*>(tmp);
   }
 
   // O(h) nothrow
-  iterator<Base> erase(set_element_base* ptr) {
-    if (ptr == &root) {
-      return end();
+  void erase(set_element_base* ptr) {
+    if (ptr == root) {
+      return;
     }
     if (ptr->parent->left == ptr) {
       set_left(ptr->parent, merge(ptr->left, ptr->right));
@@ -210,32 +226,31 @@ public:
       set_right(ptr->parent, merge(ptr->left, ptr->right));
     }
     ptr->unlink();
-    return end();
+    return;
   }
 
   // O(h) strong
-  const_iterator find(Base const& value) const {
+  set_element<Tag>* find(Base const& value) const {
     auto it = lower_bound(value);
-    if (it != end() && *it == value) {
+    if (it != end() && get_value(it) == value) {
       return it;
     }
     return end();
   }
 
-  const_iterator lower_bound(Base const& value) const {
-    auto p = split(root.left, value);
+  set_element<Tag>* lower_bound(Base const& value) const {
+    auto p = split(root->left, value,
+                   *static_cast<Compare*>(const_cast<set*>(this)));
     auto m = get_min(p.second);
-    const_iterator res = m == nullptr
-                           ? end()
-                           : const_iterator(static_cast<set_element<Tag>*>(m));
-    set_left(const_cast<set_element<Tag>*>(&root), merge(p.first, p.second));
+    auto res = m == nullptr ? end() : static_cast<set_element<Tag>*>(m);
+    set_left(const_cast<set_element<Tag>*>(root), merge(p.first, p.second));
     return res;
   }
 
-  const_iterator upper_bound(Base const& value) const {
+  set_element<Tag>* upper_bound(Base const& value) const {
     auto it = lower_bound(value);
     if (it != end()) {
-      if (*it == value) {
+      if (get_value(it) == value) {
         it++;
       }
     }
@@ -243,79 +258,13 @@ public:
   }
 
   void swap(set& other) {
-    auto ptr = root.left;
-    set_left(&root, other.root.left);
-    set_left(&other.root, ptr);
+    auto ptr = root->left;
+    set_left(root, other.root->left);
+    set_left(other.root, ptr);
   }
 
   friend void swap(set& a, set& b) noexcept {
     a.swap(b);
   }
-
-  template <typename E>
-  struct iterator {
-  public:
-
-    set_element<Tag>* ptr{nullptr};
-
-    explicit iterator(set_element<Tag>* ptr) : ptr(ptr) {}
-
-    friend set;
-
-    template <class Left, class Right, class CompareLeft, class CompareRight>
-    friend struct bimap;
-
-  public:
-
-    using iterator_category = std::bidirectional_iterator_tag;
-    using difference_type = std::ptrdiff_t;
-    using value_type = E const;
-    using pointer = E const*;
-    using reference = E const&;
-
-    iterator() = default;
-
-    iterator(iterator const& other) : ptr(other.ptr) {}
-
-    reference operator*() const {
-      return (*static_cast<T*>(ptr)).elem;
-    }
-
-    pointer operator->() const {
-      return static_cast<T*>(ptr)->elem;
-    }
-
-    iterator& operator++() & {
-      ptr = static_cast<set_element<Tag>*>(
-          get_next(static_cast<set_element_base*>(ptr)));
-      return *this;
-    }
-
-    iterator operator++(int) & {
-      iterator old = *this;
-      ++(*this);
-      return old;
-    }
-
-    iterator& operator--() & {
-      ptr = static_cast<set_element<Tag>*>(
-          get_prev(static_cast<set_element_base*>(ptr)));
-      return *this;
-    }
-
-    iterator operator--(int) & {
-      iterator old = *this;
-      --(*this);
-      return old;
-    }
-
-    bool operator==(const_iterator const& other) const {
-      return ptr == other.ptr;
-    }
-
-    bool operator!=(const_iterator const& other) const {
-      return ptr != other.ptr;
-    }
-  };
 };
 } // namespace intrusive

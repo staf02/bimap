@@ -14,10 +14,9 @@ private:
   template <class T, class Tag>
   struct base_element : intrusive::set_element<Tag> {
     T elem;
-    explicit base_element(T const& elem)
-        : elem(elem), intrusive::set_element<Tag>() {}
-    explicit base_element(T&& elem)
-        : elem(std::move(elem)), intrusive::set_element<Tag>() {}
+
+    explicit base_element(T const& elem) : elem(elem) {}
+    explicit base_element(T&& elem) : elem(std::move(elem)) {}
   };
 
 public:
@@ -26,166 +25,125 @@ public:
 
 private:
   struct pair : left_t, right_t {
-    explicit pair(Left const& l, Right const& r) : left_t(l), right_t(r) {}
-    explicit pair(Left&& l, Right const& r)
-        : left_t(std::move(l)), right_t(r) {}
-    explicit pair(Left const& l, Right&& r)
-        : left_t(l), right_t(std::move(r)) {}
-    explicit pair(Left&& l, Right&& r)
+    explicit pair(Left l, Right r)
         : left_t(std::move(l)), right_t(std::move(r)) {}
+    pair() = default;
+  };
+
+  struct root_pair : intrusive::set_element<left_tag>,
+                     intrusive::set_element<right_tag> {
+    root_pair() = default;
   };
 
   intrusive::set<left_t, Left, left_tag, CompareLeft> l;
   intrusive::set<right_t, Right, right_tag, CompareRight> r;
+  root_pair root;
   size_t size_{0};
 
 public:
   using node_t = pair;
 
-  struct left_iterator;
-  struct right_iterator;
-
-  struct left_iterator {
-
+  template <class T, class Base, class Tag, class Compare, class OtherT,
+            class OtherBase, class OtherTag, class OtherCompare>
+  struct bimap_iterator {
     using iterator_category = std::bidirectional_iterator_tag;
     using difference_type = std::ptrdiff_t;
-    using value_type = Left const;
-    using pointer = Left const*;
-    using reference = Left const&;
+    using value_type = Base const;
+    using pointer = Base const*;
+    using reference = Base const&;
 
-    left_iterator() = default;
-
-    left_iterator(typename intrusive::set<left_t, Left, left_tag,
-                                          CompareLeft>::const_iterator it)
-        : it(it) {}
+    bimap_iterator() = default;
 
     reference operator*() const {
-      return *(it);
+      return (*static_cast<T*>(it)).elem;
     }
 
     pointer operator->() const {
-      return &(*it);
+      return &(*static_cast<T*>(it)).elem;
     }
 
-    left_iterator& operator++() {
-      it++;
+    bimap_iterator& operator++() {
+      it = static_cast<intrusive::set_element<Tag>*>(
+          intrusive::set<T, Base, Tag, Compare>::get_next(
+              static_cast<intrusive::set_element_base*>(it)));
       return *this;
     }
 
-    left_iterator operator++(int) {
-      left_iterator old = *this;
+    bimap_iterator operator++(int) {
+      bimap_iterator old = *this;
       ++(*this);
       return old;
     }
 
-    left_iterator& operator--() {
-      it--;
+    bimap_iterator& operator--() {
+      it = static_cast<intrusive::set_element<Tag>*>(
+          intrusive::set<T, Base, Tag, Compare>::get_prev(
+              static_cast<intrusive::set_element_base*>(it)));
       return *this;
     }
 
-    left_iterator operator--(int) {
-      left_iterator old = *this;
+    bimap_iterator operator--(int) {
+      bimap_iterator old = *this;
       --(*this);
       return old;
     }
 
-    right_iterator flip() const {
-      right_t* new_ptr = static_cast<right_t*>(static_cast<node_t*>(it.ptr));
-      return right_iterator(new_ptr);
+    bimap_iterator<OtherT, OtherBase, OtherTag, OtherCompare, T, Base, Tag,
+                   Compare>
+    flip() const {
+      if (it->has_parent()) {
+        return bimap_iterator<OtherT, OtherBase, OtherTag, OtherCompare, T, Base,
+                              Tag, Compare>(
+            static_cast<intrusive::set_element<OtherTag>*>(
+                static_cast<node_t*>(it)));
+      }
+      return bimap_iterator<OtherT, OtherBase, OtherTag, OtherCompare, T, Base,
+                            Tag, Compare>(
+          static_cast<intrusive::set_element<OtherTag>*>(
+              static_cast<root_pair*>(it)));
     }
 
-    bool operator==(left_iterator const& other) const {
+    bool operator==(bimap_iterator const& other) const {
       return it == other.it;
     }
 
-    bool operator!=(left_iterator const& other) const {
+    bool operator!=(bimap_iterator const& other) const {
       return it != other.it;
     }
 
-    intrusive::set_element<left_tag>* get_ptr() {
-      return it.ptr;
+  private:
+    friend struct bimap;
+
+    intrusive::set_element<Tag>* get_ptr() {
+      return it;
     }
 
-    typename intrusive::set<left_t, Left, left_tag, CompareLeft>::const_iterator
-        it;
-    explicit left_iterator(left_t* ptr)
-        : it(static_cast<intrusive::set_element<left_tag>*>(ptr)) {}
+    intrusive::set_element<Tag>* it;
+
+    explicit bimap_iterator(intrusive::set_element<Tag>* ptr) : it(ptr) {}
   };
 
-  struct right_iterator {
+  using left_iterator = bimap_iterator<left_t, Left, left_tag, CompareLeft,
+                                       right_t, Right, right_tag, CompareRight>;
+  using right_iterator = bimap_iterator<right_t, Right, right_tag, CompareRight,
+                                        left_t, Left, left_tag, CompareLeft>;
 
-    using iterator_category = std::bidirectional_iterator_tag;
-    using difference_type = std::ptrdiff_t;
-    using value_type = Right const;
-    using pointer = Right const*;
-    using reference = Right const&;
+  template <class T, class Base, class Tag, class Compare, class OtherT,
+            class OtherBase, class OtherTag, class OtherCompare>
+  friend struct bimap_iterator;
 
-    right_iterator() = default;
-
-    right_iterator(typename intrusive::set<right_t, Right, right_tag,
-                                           CompareRight>::const_iterator it)
-        : it(it) {}
-
-    reference operator*() const {
-      return (*it);
-    }
-
-    pointer operator->() const {
-      return &(*it);
-    }
-
-    right_iterator& operator++() {
-      it++;
-      return *this;
-    }
-
-    right_iterator operator++(int) {
-      right_iterator old = *this;
-      ++(*this);
-      return old;
-    }
-
-    right_iterator& operator--() {
-      it--;
-      return *this;
-    }
-
-    right_iterator operator--(int) {
-      right_iterator old = *this;
-      --(*this);
-      return old;
-    }
-
-    left_iterator flip() const {
-      left_t* new_ptr = static_cast<left_t*>(static_cast<node_t*>(it.ptr));
-      return left_iterator(new_ptr);
-    }
-
-    bool operator==(right_iterator const& other) const {
-      return it == other.it;
-    }
-
-    bool operator!=(right_iterator const& other) const {
-      return it != other.it;
-    }
-
-    intrusive::set_element<right_tag>* get_ptr() {
-      return it.ptr;
-    }
-
-    typename intrusive::set<right_t, Right, right_tag,
-                            CompareRight>::const_iterator it;
-    explicit right_iterator(right_t* ptr)
-        : it(static_cast<intrusive::set_element<right_tag>*>(ptr)) {}
-  };
-
+public:
   // Создает bimap не содержащий ни одной пары.
-  bimap(CompareLeft compare_left = CompareLeft(),
-        CompareRight compare_right = CompareRight())
-      : l(), r() {}
+  bimap(CompareLeft left_cmp = CompareLeft(),
+        CompareRight right_cmp = CompareRight())
+      : l(static_cast<intrusive::set_element<left_tag>*>(&root), left_cmp),
+        r(static_cast<intrusive::set_element<right_tag>*>(&root), right_cmp) {}
 
   // Конструкторы от других и присваивания
-  bimap(bimap const& other) {
+  bimap(bimap const& other)
+      : l(static_cast<intrusive::set_element<left_tag>*>(&root), CompareLeft()),
+        r(static_cast<intrusive::set_element<right_tag>*>(&root),
+          CompareRight()) {
     auto it = other.begin_left();
     while (it != other.end_left()) {
       auto right_it = it.flip();
@@ -194,13 +152,12 @@ public:
     }
   }
 
-  bimap(bimap&& other) noexcept
-      : l(std::move(other.l)), r(std::move(other.r)),
-        size_(std::move(other.size_)) {}
+  bimap(bimap&& other) noexcept = default;
 
   bimap& operator=(bimap const& other) {
     if (*this != other) {
-      bimap<Left, Right, CompareLeft, CompareRight>(other).swap(*this);
+      auto tmp = bimap<Left, Right, CompareLeft, CompareRight>(other);
+      (*this).swap(tmp);
     }
     return *this;
   }
@@ -223,7 +180,16 @@ public:
   // Инвалидирует все итераторы ссылающиеся на элементы этого bimap
   // (включая итераторы ссылающиеся на элементы следующие за последними).
   ~bimap() {
-    erase_left(begin_left(), end_left());
+    auto it = begin_left();
+    while (it != end_left()) {
+      auto tmp = std::next(it);
+      auto ptr = it.get_ptr();
+      node_t* parent_ptr = static_cast<node_t*>(ptr);
+      l.erase(static_cast<intrusive::set_element<left_tag>*>(parent_ptr));
+      delete parent_ptr;
+      it = tmp;
+      size_--;
+    }
   }
 
   // Вставка пары (left, right), возвращает итератор на left.
@@ -333,17 +299,25 @@ public:
   // сторону кладет дефолтный элемент, ссылку на который и возвращает
   // Если дефолтный элемент уже лежит в противоположной паре - должен поменять
   // соответствующий ему элемент на запрашиваемый (смотри тесты)
-  template <typename T = Right, std::enable_if_t<std::is_default_constructible_v<T>, int> = 0>
+  template <typename T = Right,
+            std::enable_if_t<std::is_default_constructible_v<T>, int> = 0>
   Right const& at_left_or_default(Left const& key) {
+    auto it = find_left(key);
+    if (it != end_left()) {
+      return *it.flip();
+    }
     erase_right(Right());
-    erase_left(key);
     return *(insert(key, Right()).flip());
   }
 
-  template <typename T = Left, std::enable_if_t<std::is_default_constructible_v<T>, int> = 0>
+  template <typename T = Left,
+            std::enable_if_t<std::is_default_constructible_v<T>, int> = 0>
   Left const& at_right_or_default(Right const& key) {
+    auto it = find_right(key);
+    if (it != end_right()) {
+      return *it.flip();
+    }
     erase_left(Left());
-    erase_right(key);
     return *(insert(Left(), key));
   }
 
@@ -394,6 +368,8 @@ public:
   }
 
   // операторы сравнения
+
+public:
   friend bool operator==(bimap const& a, bimap const& b) {
     if (a.size() != b.size()) {
       return false;
@@ -401,7 +377,7 @@ public:
     auto a_it = a.begin_left(), b_it = b.begin_left();
     while (a_it != a.end_left()) {
       auto a_right_it = a_it.flip(), b_right_it = b_it.flip();
-      if (*a_it != *b_it || *a_right_it != *b_right_it) {
+      if (!(*a_it == *b_it) || !(*a_right_it == *b_right_it)) {
         return false;
       }
       a_it++;
