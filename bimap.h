@@ -11,8 +11,8 @@ template <typename Left, typename Right, typename CompareLeft = std::less<Left>,
 struct bimap {
 
 private:
-  template <class T, class Tag>
-  struct base_element : intrusive::set_element<Tag> {
+  template <class T, class Type>
+  struct base_element {
     T elem;
 
     explicit base_element(T const& elem) : elem(elem) {}
@@ -20,29 +20,31 @@ private:
   };
 
 public:
-  using left_t = base_element<Left, struct left_tag>;
-  using right_t = base_element<Right, struct right_tag>;
+  using left_t = base_element<Left, struct l_tmp>;
+  using right_t = base_element<Right, struct r_tmp>;
 
 private:
-  struct pair : left_t, right_t {
+  struct root_pair : intrusive::set_element<struct left_tag>,
+                     intrusive::set_element<struct right_tag> {
+    root_pair() = default;
+  };
+
+  struct pair : root_pair, left_t, right_t {
     explicit pair(Left l, Right r)
         : left_t(std::move(l)), right_t(std::move(r)) {}
     pair() = default;
   };
 
-  struct root_pair : intrusive::set_element<left_tag>,
-                     intrusive::set_element<right_tag> {
-    root_pair() = default;
-  };
+public:
+  using node_t = pair;
 
-  intrusive::set<left_t, Left, left_tag, CompareLeft> l;
-  intrusive::set<right_t, Right, right_tag, CompareRight> r;
+private:
+  intrusive::set<node_t, left_t, Left, left_tag, CompareLeft> l;
+  intrusive::set<node_t, right_t, Right, right_tag, CompareRight> r;
   root_pair root;
   size_t size_{0};
 
 public:
-  using node_t = pair;
-
   template <class T, class Base, class Tag, class Compare, class OtherT,
             class OtherBase, class OtherTag, class OtherCompare>
   struct bimap_iterator {
@@ -55,16 +57,16 @@ public:
     bimap_iterator() = default;
 
     reference operator*() const {
-      return (*static_cast<T*>(it)).elem;
+      return static_cast<T*>((static_cast<node_t*>(it)))->elem;
     }
 
     pointer operator->() const {
-      return &(*static_cast<T*>(it)).elem;
+      return &(static_cast<T*>((static_cast<node_t*>(it)))->elem);
     }
 
     bimap_iterator& operator++() {
       it = static_cast<intrusive::set_element<Tag>*>(
-          intrusive::set<T, Base, Tag, Compare>::get_next(
+          intrusive::set<node_t, Base, Tag, Compare>::get_next(
               static_cast<intrusive::set_element_base*>(it)));
       return *this;
     }
@@ -77,7 +79,7 @@ public:
 
     bimap_iterator& operator--() {
       it = static_cast<intrusive::set_element<Tag>*>(
-          intrusive::set<T, Base, Tag, Compare>::get_prev(
+          intrusive::set<node_t, Base, Tag, Compare>::get_prev(
               static_cast<intrusive::set_element_base*>(it)));
       return *this;
     }
@@ -91,16 +93,10 @@ public:
     bimap_iterator<OtherT, OtherBase, OtherTag, OtherCompare, T, Base, Tag,
                    Compare>
     flip() const {
-      if (it->has_parent()) {
-        return bimap_iterator<OtherT, OtherBase, OtherTag, OtherCompare, T, Base,
-                              Tag, Compare>(
-            static_cast<intrusive::set_element<OtherTag>*>(
-                static_cast<node_t*>(it)));
-      }
       return bimap_iterator<OtherT, OtherBase, OtherTag, OtherCompare, T, Base,
                             Tag, Compare>(
           static_cast<intrusive::set_element<OtherTag>*>(
-              static_cast<root_pair*>(it)));
+              static_cast<node_t*>(it)));
     }
 
     bool operator==(bimap_iterator const& other) const {
@@ -127,10 +123,6 @@ public:
                                        right_t, Right, right_tag, CompareRight>;
   using right_iterator = bimap_iterator<right_t, Right, right_tag, CompareRight,
                                         left_t, Left, left_tag, CompareLeft>;
-
-  template <class T, class Base, class Tag, class Compare, class OtherT,
-            class OtherBase, class OtherTag, class OtherCompare>
-  friend struct bimap_iterator;
 
 public:
   // Создает bimap не содержащий ни одной пары.
@@ -198,8 +190,8 @@ public:
   left_iterator insert(Left left, Right right) {
     if (find_left(left) == end_left() && find_right(right) == end_right()) {
       node_t* tmp = new pair(std::move(left), std::move(right));
-      auto it = l.insert(*static_cast<left_t*>(tmp));
-      r.insert(*static_cast<right_t*>(tmp));
+      auto it = l.insert(static_cast<left_t*>(tmp));
+      r.insert(static_cast<right_t*>(tmp));
       size_++;
       return left_iterator(it);
     }
