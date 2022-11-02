@@ -10,7 +10,7 @@ namespace intrusive {
 
 struct default_tag;
 
-template <typename T, typename Base, typename Tag = default_tag,
+template <typename U, typename T, typename Base, typename Tag = default_tag,
           typename Compare = std::less<Base>>
 struct set;
 
@@ -44,7 +44,8 @@ struct set_element_base {
     unlink();
   }
 
-  template <typename T, typename Base, typename Tag, typename Compare>
+  template <typename U, typename T, typename Base, typename Tag,
+            typename Compare>
   friend struct set;
 
 private:
@@ -61,18 +62,18 @@ private:
   }
 };
 
-
-
 template <typename Tag = default_tag>
 struct set_element : set_element_base {};
 
-template <typename T, typename Base, typename Tag, typename Compare>
+template <typename U, typename T, typename Base, typename Tag, typename Compare>
 struct set : Compare {
 public:
   set_element<Tag>* root;
 
   static Base& get_value(set_element_base* tr) {
-    return (static_cast<T*>(tr))->elem;
+    return (static_cast<T*>(
+                static_cast<U*>(static_cast<set_element<Tag>*>(tr))))
+        ->elem;
   }
 
   static std::pair<set_element_base*, set_element_base*>
@@ -201,14 +202,15 @@ public:
   }
 
   // O(h) nothrow
-  set_element<Tag>* insert(T& value) {
-    auto p = split(root->left, value.elem,
+  set_element<Tag>* insert(T* value) {
+    auto p = split(root->left, value->elem,
                    *static_cast<Compare*>(const_cast<set*>(this)));
-    auto p1 = split(p.second, value.elem,
+    auto p1 = split(p.second, value->elem,
                     *static_cast<Compare*>(const_cast<set*>(this)), false);
     auto tmp = p1.first;
     if (p1.first == nullptr) {
-      tmp = static_cast<set_element_base*>(&value);
+      tmp = static_cast<set_element_base*>(
+          static_cast<set_element<Tag>*>(static_cast<U*>(value)));
     }
     p.second = merge(tmp, p1.second);
     set_left(root, merge(p.first, p.second));
